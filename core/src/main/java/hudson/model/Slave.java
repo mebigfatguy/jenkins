@@ -120,11 +120,6 @@ public abstract class Slave extends Node implements Serializable {
     
     private /*almost final*/ DescribableList<NodeProperty<?>,NodePropertyDescriptor> nodeProperties = new DescribableList<NodeProperty<?>,NodePropertyDescriptor>(Hudson.getInstance());
 
-    /**
-     * Lazily computed set of labels from {@link #label}.
-     */
-    private transient volatile Set<Label> labels;
-
     @DataBoundConstructor
     public Slave(String name, String nodeDescription, String remoteFS, String numExecutors,
                  Mode mode, String labelString, ComputerLauncher launcher, RetentionStrategy retentionStrategy, List<? extends NodeProperty<?>> nodeProperties) throws FormException, IOException {
