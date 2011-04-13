@@ -38,7 +38,7 @@ THE SOFTWARE.
     <tr>
       <th><st:nbsp/></th>
       <th>${%Build}</th>
-      <th initialSortDir="up">${%Date}</th>
+      <th initialSortDir="up">${%Time Since}</th>
       <th>${%Status}</th>
       <th><st:nbsp/></th>
     </tr>
@@ -48,7 +48,7 @@ THE SOFTWARE.
         <td data="${b.iconColor.ordinal()}">
           <a href="${jobBaseUrl}${b.url}">
             <img src="${imagesURL}/${iconSize}/${b.buildStatusUrl}"
-                 alt="${b.iconColor.description}"/>
+                 alt="${b.iconColor.description}" class="icon${iconSize}"/>
           </a>
         </td>
         <td>

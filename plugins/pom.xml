@@ -4,17 +4,17 @@
   <parent>
     <groupId>org.jenkins-ci</groupId>
     <artifactId>jenkins</artifactId>
-    <version>1.13</version>
+    <version>1.18</version>
   </parent>
 
   <groupId>org.jenkins-ci.plugins</groupId>
   <artifactId>plugin</artifactId>
   <name>Jenkins plugin POM</name>
-  <version>1.399-SNAPSHOT</version>
+  <version>1.408-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <properties>
-    <!-- if your java.net user name is different from local user name, specify it here -->
+    <!-- if your jenkins-ci.org user name is different from local user name, specify it here -->
     <java.net.id>${user.name}</java.net.id>
   </properties>
 
@@ -38,7 +38,7 @@
       <dependency><!-- if a plugin wants to depend on the maven plugin, choose the right version automatically -->
         <groupId>org.jenkins-ci.main</groupId>
         <artifactId>maven-plugin</artifactId>
-        <version>1.399-SNAPSHOT</version>
+        <version>1.408-SNAPSHOT</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -48,31 +48,31 @@
       <groupId>org.jenkins-ci.main</groupId>
       <artifactId>jenkins-war</artifactId>
       <type>war</type>
-      <version>1.399-SNAPSHOT</version>
+      <version>1.408-SNAPSHOT</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.main</groupId>
       <artifactId>jenkins-core</artifactId>
-      <version>1.399-SNAPSHOT</version>
+      <version>1.408-SNAPSHOT</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.main</groupId>
       <artifactId>jenkins-test-harness</artifactId>
-      <version>1.399-SNAPSHOT</version>
+      <version>1.408-SNAPSHOT</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.main</groupId>
       <artifactId>ui-samples-plugin</artifactId>
-      <version>1.399-SNAPSHOT</version>
+      <version>1.408-SNAPSHOT</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>4.3.1</version>
+      <version>4.8.2</version>
       <scope>test</scope>
     </dependency>
     <!--
@@ -120,7 +120,7 @@
       <plugin>
         <groupId>org.jenkins-ci.tools</groupId>
         <artifactId>maven-hpi-plugin</artifactId>
-        <version>1.63</version>
+        <version>1.67</version>
         <extensions>true</extensions>
         <configuration>
           <showDeprecation>true</showDeprecation>
@@ -129,12 +129,12 @@
       <plugin>
         <groupId>org.kohsuke.stapler</groupId>
         <artifactId>maven-stapler-plugin</artifactId>
-        <version>1.12</version>
+        <!-- version specified in parent pom -->
         <extensions>true</extensions>
       </plugin>
       <plugin>
         <artifactId>maven-release-plugin</artifactId>
-        <version>2.0-beta-9</version>
+        <!-- version specified in parent pom -->
         <configuration>
           <goals>deploy</goals>
         </configuration>
@@ -142,7 +142,7 @@
       <plugin>
         <groupId>org.jvnet.localizer</groupId>
         <artifactId>maven-localizer-plugin</artifactId>
-        <version>1.8</version>
+        <!-- version specified in parent pom -->
         <executions>
           <execution>
             <goals>
@@ -156,12 +156,8 @@
         </executions>
       </plugin>
       <plugin>
-        <!--
-          javadoc plugin 2.3 apparently interferes with the release process,
-          so sticking to 2.2 (http://www.nabble.com/description-setting-plugin-tp14846399p14950047.html)
-        -->
         <artifactId>maven-javadoc-plugin</artifactId>
-        <version>2.2</version>
+        <!-- version specified in parent pom -->
       </plugin>
       <plugin>
         <groupId>org.codehaus.groovy.maven</groupId>
@@ -227,7 +223,7 @@
 
   <distributionManagement>
     <snapshotRepository>
-      <id>maven.hudson-labs.org</id>
+      <id>maven.jenkins-ci.org</id>
       <url>http://maven.jenkins-ci.org:8081/content/repositories/snapshots</url>
     </snapshotRepository>
   </distributionManagement>
