@@ -266,9 +266,21 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
     protected Run(JobT project, File buildDir) throws IOException {
         this(project, parseTimestampFromBuildDir(buildDir));
         this.previousBuildInProgress = _this(); // loaded builds are always completed
+        reload();
+    }
+
+    /**
+     * Reloads the build record from disk.
+     *
+     * @since 1.410
+     */
+    public void reload() throws IOException {
         this.state = State.COMPLETED;
         this.result = Result.FAILURE;  // defensive measure. value should be overwritten by unmarshal, but just in case the saved data is inconsistent
         getDataFile().unmarshal(this); // load the rest of the data
+
+        // not calling onLoad upon reload. partly because we don't want to call that from Run constructor,
+        // and partly because some existing use of onLoad isn't assuming that it can be invoked multiple times.
     }
 
     /**
@@ -1625,7 +1637,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
         if(Functions.isArtifactsPermissionEnabled()) {
           checkPermission(ARTIFACTS);
         }
-        return new DirectoryBrowserSupport(this,new FilePath(getArtifactsDir()), project.getDisplayName()+' '+getDisplayName(), "package.gif", true);
+        return new DirectoryBrowserSupport(this,new FilePath(getArtifactsDir()), project.getDisplayName()+' '+getDisplayName(), "package.png", true);
     }
 
     /**

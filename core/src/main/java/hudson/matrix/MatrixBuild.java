@@ -51,6 +51,7 @@ import java.util.List;
 
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.export.Exported;
 
 /**
  * Build of {@link MatrixProject}.
@@ -126,6 +127,7 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
     /**
      * Returns all {@link MatrixRun}s for this {@link MatrixBuild}.
      */
+    @Exported
     public List<MatrixRun> getRuns() {
         List<MatrixRun> r = new ArrayList<MatrixRun>();
         for(MatrixConfiguration c : getParent().getItems()) {
@@ -323,17 +325,6 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
             for (MatrixAggregator a : aggregators)
                 a.endBuild();
         }
-        
-        @Override
-        protected Lease decideWorkspace(Node n, WorkspaceList wsl) throws IOException, InterruptedException {
-            String customWorkspace = getProject().getCustomWorkspace();
-            if (customWorkspace != null) {
-                // we allow custom workspaces to be concurrently used between jobs.
-                return Lease.createDummyLease(n.getRootPath().child(getEnvironment(listener).expand(customWorkspace)));
-            }
-            return super.decideWorkspace(n,wsl);
-        }
-      
     }
 
     /**
