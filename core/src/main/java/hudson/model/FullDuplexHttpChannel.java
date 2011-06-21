@@ -53,7 +53,7 @@ abstract class FullDuplexHttpChannel {
 
     private boolean completed;
 
-    public FullDuplexHttpChannel(UUID uuid, boolean restricted) throws IOException {
+    public FullDuplexHttpChannel(UUID uuid, boolean restricted) {
         this.uuid = uuid;
         this.restricted = restricted;
     }
