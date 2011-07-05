@@ -24,7 +24,7 @@
 package hudson;
 
 import hudson.model.TaskListener;
-import hudson.model.Hudson;
+import jenkins.model.Jenkins;
 import static hudson.util.jna.GNUCLibrary.LIBC;
 
 import hudson.util.IOException2;
@@ -302,7 +302,16 @@ public class Util {
     public static void deleteRecursive(File dir) throws IOException {
         if(!isSymlink(dir))
             deleteContentsRecursive(dir);
-        deleteFile(dir);
+        try {
+            deleteFile(dir);
+        } catch (IOException e) {
+            // if some of the child directories are big, it might take long enough to delete that
+            // it allows others to create new files, causing problemsl ike JENKINS-10113
+            // so give it one more attempt before we give up.
+            if(!isSymlink(dir))
+                deleteContentsRecursive(dir);
+            deleteFile(dir);
+        }
     }
 
     /*
@@ -1106,7 +1115,7 @@ public class Util {
      */
     public static String wrapToErrorSpan(String s) {
         s = "<span class=error><img src='"+
-            Stapler.getCurrentRequest().getContextPath()+ Hudson.RESOURCE_PATH+
+            Stapler.getCurrentRequest().getContextPath()+ Jenkins.RESOURCE_PATH+
             "/images/none.gif' height=16 width=1>"+s+"</span>";
         return s;
     }

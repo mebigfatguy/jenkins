@@ -38,7 +38,7 @@ import hudson.model.DependencyGraph;
 import hudson.model.Descriptor;
 import hudson.model.Descriptor.FormException;
 import hudson.model.Executor;
-import hudson.model.Hudson;
+import jenkins.model.Jenkins;
 import hudson.model.Item;
 import hudson.model.ItemGroup;
 import hudson.model.Job;
@@ -86,6 +86,8 @@ import net.sf.json.JSONObject;
 
 import org.apache.commons.lang.math.NumberUtils;
 import org.apache.maven.model.building.ModelBuildingRequest;
+import org.kohsuke.stapler.HttpResponse;
+import org.kohsuke.stapler.HttpResponses;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -205,6 +207,12 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
     private int mavenValidationLevel = -1;
 
     /**
+     * Inform jenkins this build don't use UI code and can run without access to graphical environment. Could be used
+     * later to select a headless-slave from a pool, but first introduced for JENKINS-9785
+     */
+    private boolean runHeadless = false;
+
+    /**
      * Reporters configured at {@link MavenModuleSet} level. Applies to all {@link MavenModule} builds.
      */
     private DescribableList<MavenReporter,Descriptor<MavenReporter>> reporters =
@@ -225,11 +233,11 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
         new DescribableList<BuildWrapper, Descriptor<BuildWrapper>>(this);
 
     public MavenModuleSet(String name) {
-        this(Hudson.getInstance(),name);
+        this(Jenkins.getInstance(),name);
     }
 
     public MavenModuleSet(ItemGroup parent, String name) {
-        super(Hudson.getInstance(),name);
+        super(parent,name);
     }
 
     public String getUrlChildPrefix() {
@@ -357,6 +365,10 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
         return ignoreUpstremChanges;
     }
 
+    public boolean runHeadless() {
+        return runHeadless;
+    }
+
     public boolean isArchivingDisabled() {
         return archivingDisabled;
     }
@@ -375,6 +387,10 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
 
     public void setIgnoreUpstremChanges(boolean ignoreUpstremChanges) {
         this.ignoreUpstremChanges = ignoreUpstremChanges;
+    }
+
+    public void setRunHeadless(boolean runHeadless) {
+        this.runHeadless = runHeadless;
     }
 
     public void setIsArchivingDisabled(boolean archivingDisabled) {
@@ -762,7 +778,7 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
      */
     public List<Queue.Item> getQueueItems() {
         List<Queue.Item> r = new ArrayList<hudson.model.Queue.Item>();
-        for( Queue.Item item : Hudson.getInstance().getQueue().getItems() ) {
+        for( Queue.Item item : Jenkins.getInstance().getQueue().getItems() ) {
             Task t = item.task;
             if((t instanceof MavenModule && ((MavenModule)t).getParent()==this) || t ==this)
                 r.add(item);
@@ -811,6 +827,7 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
         aggregatorStyleBuild = !req.hasParameter("maven.perModuleBuild");
         usePrivateRepository = req.hasParameter("maven.usePrivateRepository");
         ignoreUpstremChanges = !json.has("triggerByDependency");
+        runHeadless = req.hasParameter("maven.runHeadless");
         incrementalBuild = req.hasParameter("maven.incrementalBuild");
         archivingDisabled = req.hasParameter("maven.archivingDisabled");
         resolveDependencies = req.hasParameter( "maven.resolveDependencies" );
@@ -824,11 +841,11 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
     /**
      * Delete all disabled modules.
      */
-    public void doDoDeleteAllDisabledModules(StaplerResponse rsp) throws IOException, InterruptedException {
+    public HttpResponse doDoDeleteAllDisabledModules() throws IOException, InterruptedException {
         checkPermission(DELETE);
         for( MavenModule m : getDisabledModules(true))
             m.delete();
-        rsp.sendRedirect2(".");
+        return HttpResponses.redirectToDot();
     }
     
     /**
@@ -913,7 +930,7 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
         }
 
         public Maven.DescriptorImpl getMavenDescriptor() {
-            return Hudson.getInstance().getDescriptorByType(Maven.DescriptorImpl.class);
+            return Jenkins.getInstance().getDescriptorByType(Maven.DescriptorImpl.class);
         }
         
         /**
