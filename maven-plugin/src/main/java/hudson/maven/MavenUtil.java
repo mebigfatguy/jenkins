@@ -52,6 +52,8 @@ import org.apache.maven.artifact.versioning.ComparableVersion;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.ProjectBuildingException;
 
+import edu.umd.cs.findbugs.annotations.SuppressWarnings;
+
 /**
  * @author Kohsuke Kawaguchi
  */
@@ -90,7 +92,7 @@ public class MavenUtil {
         Properties systemProperties = null;
         String privateRepository = null;
         
-        AbstractProject project = build.getProject();
+        AbstractProject<?,?> project = build.getProject();
         
         if (project instanceof ProjectWithMaven) {
             m = ((ProjectWithMaven) project).inferMavenInstallation().forNode(Jenkins.getInstance(),listener);
@@ -136,6 +138,7 @@ public class MavenUtil {
      * Creates a fresh {@link MavenEmbedder} instance.
      *
      */
+    @SuppressWarnings("RV_RETURN_VALUE_IGNORED_BAD_PRACTICE")
     public static MavenEmbedder createEmbedder(MavenEmbedderRequest mavenEmbedderRequest) throws MavenEmbedderException, IOException {
         
         
@@ -161,10 +164,12 @@ public class MavenUtil {
         } else {
             mavenRequest.setUserSettingsFile( new File( m2Home, "settings.xml" ).getAbsolutePath() );
         }
-        
 
-        // FIXME configure those !!
-        mavenRequest.setGlobalSettingsFile( new File( mavenEmbedderRequest.getMavenHome(), "conf/settings.xml" ).getAbsolutePath() );
+        if ( mavenEmbedderRequest.getGlobalSettings() != null) {
+            mavenRequest.setGlobalSettingsFile( mavenEmbedderRequest.getGlobalSettings().getAbsolutePath() );
+        } else {
+            mavenRequest.setGlobalSettingsFile( new File( mavenEmbedderRequest.getMavenHome(), "conf/settings.xml" ).getAbsolutePath() );
+        }
         
         if (mavenEmbedderRequest.getWorkspaceReader() != null ) {
             mavenRequest.setWorkspaceReader( mavenEmbedderRequest.getWorkspaceReader() );

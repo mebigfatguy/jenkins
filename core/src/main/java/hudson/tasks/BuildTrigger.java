@@ -26,6 +26,7 @@ package hudson.tasks;
 import hudson.Extension;
 import hudson.Launcher;
 import hudson.Util;
+import hudson.console.HyperlinkNote;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
@@ -45,6 +46,7 @@ import hudson.model.Result;
 import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.model.listeners.ItemListener;
+import hudson.tasks.BuildTrigger.DescriptorImpl.ItemListenerImpl;
 import hudson.util.FormValidation;
 import net.sf.json.JSONObject;
 import org.apache.commons.lang.StringUtils;
@@ -203,14 +205,14 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
         for (Dependency dep : downstreamProjects) {
             AbstractProject p = dep.getDownstreamProject();
             if (p.isDisabled()) {
-                logger.println(Messages.BuildTrigger_Disabled(p.getName()));
+                logger.println(Messages.BuildTrigger_Disabled(HyperlinkNote.encodeTo('/'+ p.getUrl(),p.getName())));
                 continue;
             }
             List<Action> buildActions = new ArrayList<Action>();
             if (dep.shouldTriggerBuild(build, listener, buildActions)) {
                 // this is not completely accurate, as a new build might be triggered
                 // between these calls
-                String name = p.getName()+" #"+p.getNextBuildNumber();
+                String name = HyperlinkNote.encodeTo('/'+ p.getUrl(), p.getName())+" #"+p.getNextBuildNumber();
                 if(p.scheduleBuild(p.getQuietPeriod(), new UpstreamCause((Run)build),
                                    buildActions.toArray(new Action[buildActions.size()]))) {
                     logger.println(Messages.BuildTrigger_Triggering(name));
@@ -327,7 +329,8 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
                 if (StringUtils.isNotBlank(projectName)) {
                     Item item = Jenkins.getInstance().getItem(projectName,project,Item.class);
                     if(item==null)
-                        return FormValidation.error(Messages.BuildTrigger_NoSuchProject(projectName,AbstractProject.findNearest(projectName).getName()));
+                        return FormValidation.error(Messages.BuildTrigger_NoSuchProject(projectName,
+                                AbstractProject.findNearest(projectName,project.getParent()).getRelativeNameFrom(project)));
                     if(!(item instanceof AbstractProject))
                         return FormValidation.error(Messages.BuildTrigger_NotBuildable(projectName));
                     hasProjects = true;

@@ -56,7 +56,7 @@ import java.net.MalformedURLException;
 public class GroovyCommand extends CLICommand implements Serializable {
     @Override
     public String getShortDescription() {
-        return "Executes the specified Groovy script";
+        return Messages.GroovyCommand_ShortDescription();
     }
 
     @Argument(metaVar="SCRIPT",usage="Script to be executed. File, URL or '=' to represent stdin.")
@@ -69,8 +69,8 @@ public class GroovyCommand extends CLICommand implements Serializable {
     public List<String> remaining = new ArrayList<String>();
 
     protected int run() throws Exception {
-        // this allows the caller to manipulate the JVM state, so require the admin privilege.
-        Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
+        // this allows the caller to manipulate the JVM state, so require the execute script privilege.
+        Jenkins.getInstance().checkPermission(Jenkins.RUN_SCRIPTS);
 
         Binding binding = new Binding();
         binding.setProperty("out",new PrintWriter(stdout,true));

@@ -63,7 +63,6 @@ import org.apache.commons.fileupload.FileItem;
 import org.kohsuke.stapler.Stapler;
 import org.jvnet.robust_http_client.RetryableHttpStream;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileFilter;
@@ -94,12 +93,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.ZipInputStream;
 
 import com.sun.jna.Native;
+import java.util.Enumeration;
 import java.util.logging.Logger;
 import org.apache.tools.ant.taskdefs.Chmod;
 
+import org.apache.tools.zip.ZipFile;
+import org.apache.tools.zip.ZipEntry;
+        
 /**
  * {@link File} like object with remoting support.
  *
@@ -418,8 +420,12 @@ public final class FilePath implements Serializable {
      */
     public void unzip(final FilePath target) throws IOException, InterruptedException {
         target.act(new FileCallable<Void>() {
+
             public Void invoke(File dir, VirtualChannel channel) throws IOException {
-                unzip(dir,FilePath.this.read());
+                if (FilePath.this.isRemote())
+                    unzip(dir, FilePath.this.read()); // use streams
+                else
+                    unzip(dir, new File(FilePath.this.getRemote())); // shortcut to local file
                 return null;
             }
             private static final long serialVersionUID = 1L;
@@ -466,21 +472,42 @@ public final class FilePath implements Serializable {
     }
 
     private void unzip(File dir, InputStream in) throws IOException {
+        File tmpFile = File.createTempFile("tmpzip", null); // uses java.io.tmpdir
+        try {
+            IOUtils.copy(in, tmpFile);
+            unzip(dir,tmpFile);
+        }
+        finally {
+            tmpFile.delete();
+        }
+    }
+
+    private void unzip(File dir, File zipFile) throws IOException {
         dir = dir.getAbsoluteFile();    // without absolutization, getParentFile below seems to fail
-        ZipInputStream zip = new ZipInputStream(new BufferedInputStream(in));
-        java.util.zip.ZipEntry e;
+        ZipFile zip = new ZipFile(zipFile);
+        Enumeration<ZipEntry> entries = zip.getEntries();
 
         try {
-            while((e=zip.getNextEntry())!=null) {
-                File f = new File(dir,e.getName());
-                if(e.isDirectory()) {
+            while (entries.hasMoreElements()) {
+                ZipEntry e = entries.nextElement();
+                File f = new File(dir, e.getName());
+                if (e.isDirectory()) {
                     f.mkdirs();
                 } else {
                     File p = f.getParentFile();
-                    if(p!=null) p.mkdirs();
-                    IOUtils.copy(zip, f);
+                    if (p != null) {
+                        p.mkdirs();
+                    }
+                    IOUtils.copy(zip.getInputStream(e), f);
+                    try {
+                        FilePath target = new FilePath(f);
+                        int mode = e.getUnixMode();
+                        if (mode!=0)    // Ant returns 0 if the archive doesn't record the access mode
+                            target.chmod(mode);
+                    } catch (InterruptedException ex) {
+                        LOGGER.log(Level.WARNING, "unable to set permissions", ex);
+                    }
                     f.setLastModified(e.getTime());
-                    zip.closeEntry();
                 }
             }
         } finally {
@@ -630,7 +657,7 @@ public final class FilePath implements Serializable {
                 listener.getLogger().println(message);
 
             // for HTTP downloads, enable automatic retry for added resilience
-            InputStream in = archive.getProtocol().equals("http") ? new RetryableHttpStream(archive) : con.getInputStream();
+            InputStream in = archive.getProtocol().startsWith("http") ? ProxyConfiguration.getInputStream(archive) : con.getInputStream();
             CountingInputStream cis = new CountingInputStream(in);
             try {
                 if(archive.toExternalForm().endsWith(".zip"))
@@ -1392,13 +1419,14 @@ public final class FilePath implements Serializable {
     }
 
     /**
-     * Copies this file to the specified target, with file permissions intact.
+     * Copies this file to the specified target, with file permissions and other meta attributes intact.
      * @since 1.311
      */
     public void copyToWithPermission(FilePath target) throws IOException, InterruptedException {
         copyTo(target);
         // copy file permission
         target.chmod(mode());
+        target.touch(lastModified());
     }
 
     /**
@@ -1464,12 +1492,26 @@ public final class FilePath implements Serializable {
 
     /**
      * Copies the contents of this directory recursively into the specified target directory.
+     * 
+     * @return
+     *      the number of files copied.
      * @since 1.312 
      */
     public int copyRecursiveTo(FilePath target) throws IOException, InterruptedException {
         return copyRecursiveTo("**/*",target);
     }
 
+    /**
+     * Copies the files that match the given file mask to the specified target node.
+     *
+     * @param fileMask
+     *      Ant GLOB pattern.
+     *      String like "foo/bar/*.xml" Multiple patterns can be separated
+     *      by ',', and whitespace can surround ',' (so that you can write
+     *      "abc, def" and "abc,def" to mean the same thing.
+     * @return
+     *      the number of files copied.
+     */
     public int copyRecursiveTo(String fileMask, FilePath target) throws IOException, InterruptedException {
         return copyRecursiveTo(fileMask,null,target);
     }

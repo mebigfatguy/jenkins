@@ -27,16 +27,20 @@ import static hudson.init.InitMilestone.PLUGINS_PREPARED;
 import static hudson.init.InitMilestone.PLUGINS_STARTED;
 import static hudson.init.InitMilestone.PLUGINS_LISTED;
 
+import com.google.inject.Guice;
+import com.google.inject.Injector;
 import hudson.PluginWrapper.Dependency;
 import hudson.init.InitStrategy;
 import hudson.init.InitializerFinder;
 import hudson.model.AbstractModelObject;
 import hudson.model.Failure;
+import jenkins.ClassLoaderReflectionToolkit;
 import jenkins.model.Jenkins;
 import hudson.model.UpdateCenter;
 import hudson.model.UpdateSite;
 import hudson.util.CyclicGraphDetector;
 import hudson.util.CyclicGraphDetector.CycleDetectedException;
+import hudson.util.FormValidation;
 import hudson.util.PersistedList;
 import hudson.util.Service;
 import org.apache.commons.fileupload.FileItem;
@@ -61,6 +65,8 @@ import javax.servlet.ServletException;
 import java.io.File;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -91,7 +97,7 @@ public abstract class PluginManager extends AbstractModelObject {
     protected final List<PluginWrapper> plugins = new ArrayList<PluginWrapper>();
 
     /**
-     * All active plugins.
+     * All active plugins, topologically sorted so that when X depends on Y, Y appears in the list before X does.
      */
     protected final List<PluginWrapper> activePlugins = new CopyOnWriteArrayList<PluginWrapper>();
 
@@ -276,6 +282,8 @@ public abstract class PluginManager extends AbstractModelObject {
                     Jenkins.getInstance().lookup.set(PluginInstanceStore.class,new PluginInstanceStore());
                     TaskGraphBuilder g = new TaskGraphBuilder();
 
+                    Jenkins.getInstance().lookup.set(Injector.class,Guice.createInjector());
+
                     // schedule execution of loading plugins
                     for (final PluginWrapper p : activePlugins.toArray(new PluginWrapper[activePlugins.size()])) {
                         g.followedBy().notFatal().attains(PLUGINS_PREPARED).add("Loading plugin " + p.getShortName(), new Executable() {
@@ -358,7 +366,7 @@ public abstract class PluginManager extends AbstractModelObject {
     /**
      * Creates a hudson.PluginStrategy, looking at the corresponding system property. 
      */
-    private PluginStrategy createPluginStrategy() {
+    protected PluginStrategy createPluginStrategy() {
 		String strategyName = System.getProperty(PluginStrategy.class.getName());
 		if (strategyName != null) {
 			try {
@@ -565,14 +573,34 @@ public abstract class PluginManager extends AbstractModelObject {
             hudson.proxy = null;
             ProxyConfiguration.getXmlFile().delete();
         } else try {
-            hudson.proxy = new ProxyConfiguration(server,Integer.parseInt(Util.fixNull(port)),
+            int proxyPort = Integer.parseInt(Util.fixNull(port));
+            if (proxyPort < 0 || proxyPort > 65535) {
+               throw new Failure(Messages.PluginManager_PortNotInRange(0, 65535)); 
+            }
+            hudson.proxy = new ProxyConfiguration(server, proxyPort,
                     Util.fixEmptyAndTrim(userName),Util.fixEmptyAndTrim(password));
             hudson.proxy.save();
         } catch (NumberFormatException nfe) {
-            return HttpResponses.error(StaplerResponse.SC_BAD_REQUEST,
-                    new IllegalArgumentException("Invalid proxy port: " + port, nfe));
+            throw new Failure(Messages.PluginManager_PortNotANumber());
         }
         return new HttpRedirect("advanced");
+    }
+    
+    public FormValidation doCheckProxyPort(@QueryParameter String value) {
+        value = Util.fixEmptyAndTrim(value);
+        if (value == null) {
+            return FormValidation.ok();
+        }
+        int port;
+        try {
+            port = Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return FormValidation.error(Messages.PluginManager_PortNotANumber());
+        }
+        if (port < 0 || port > 65535) {
+            return FormValidation.error(Messages.PluginManager_PortNotInRange(0, 65535));
+        }
+        return FormValidation.ok();
     }
 
     /**
@@ -618,6 +646,8 @@ public abstract class PluginManager extends AbstractModelObject {
          */
         private ConcurrentMap<String, WeakReference<Class>> generatedClasses = new ConcurrentHashMap<String, WeakReference<Class>>();
 
+        private ClassLoaderReflectionToolkit clt = new ClassLoaderReflectionToolkit();
+
         public UberClassLoader() {
             super(PluginManager.class.getClassLoader());
         }
@@ -635,21 +665,24 @@ public abstract class PluginManager extends AbstractModelObject {
                 else            generatedClasses.remove(name,wc);
             }
 
-            // first, use the context classloader so that plugins that are loading
-            // can use its own classloader first.
-            ClassLoader cl = Thread.currentThread().getContextClassLoader();
-            if(cl!=null && cl!=this)
-                try {
-                    return cl.loadClass(name);
-                } catch(ClassNotFoundException e) {
-                    // not found. try next
+            if (FAST_LOOKUP) {
+                for (PluginWrapper p : activePlugins) {
+                    try {
+                        Class c = clt.findLoadedClass(p.classLoader,name);
+                        if (c!=null)    return c;
+                        // calling findClass twice appears to cause LinkageError: duplicate class def
+                        return clt.findClass(p.classLoader,name);
+                    } catch (InvocationTargetException e) {
+                        //not found. try next
+                    }
                 }
-
-            for (PluginWrapper p : activePlugins) {
-                try {
-                    return p.classLoader.loadClass(name);
-                } catch (ClassNotFoundException e) {
-                    //not found. try next
+            } else {
+                for (PluginWrapper p : activePlugins) {
+                    try {
+                        return p.classLoader.loadClass(name);
+                    } catch (ClassNotFoundException e) {
+                        //not found. try next
+                    }
                 }
             }
             // not found in any of the classloader. delegate.
@@ -658,10 +691,22 @@ public abstract class PluginManager extends AbstractModelObject {
 
         @Override
         protected URL findResource(String name) {
-            for (PluginWrapper p : activePlugins) {
-                URL url = p.classLoader.getResource(name);
-                if(url!=null)
-                    return url;
+            if (FAST_LOOKUP) {
+                try {
+                    for (PluginWrapper p : activePlugins) {
+                        URL url = clt.findResource(p.classLoader,name);
+                        if(url!=null)
+                            return url;
+                    }
+                } catch (InvocationTargetException e) {
+                    throw new Error(e);
+                }
+            } else {
+                for (PluginWrapper p : activePlugins) {
+                    URL url = p.classLoader.getResource(name);
+                    if(url!=null)
+                        return url;
+                }
             }
             return null;
         }
@@ -669,21 +714,32 @@ public abstract class PluginManager extends AbstractModelObject {
         @Override
         protected Enumeration<URL> findResources(String name) throws IOException {
             List<URL> resources = new ArrayList<URL>();
-            for (PluginWrapper p : activePlugins) {
-                resources.addAll(Collections.list(p.classLoader.getResources(name)));
+            if (FAST_LOOKUP) {
+                try {
+                    for (PluginWrapper p : activePlugins) {
+                        resources.addAll(Collections.list(clt.findResources(p.classLoader, name)));
+                    }
+                } catch (InvocationTargetException e) {
+                    throw new Error(e);
+                }
+            } else {
+                for (PluginWrapper p : activePlugins) {
+                    resources.addAll(Collections.list(p.classLoader.getResources(name)));
+                }
             }
             return Collections.enumeration(resources);
         }
 
         @Override
-        public String toString()
-        {
+        public String toString() {
             // only for debugging purpose
             return "classLoader " +  getClass().getName();
         }
     }
 
     private static final Logger LOGGER = Logger.getLogger(PluginManager.class.getName());
+
+    public static boolean FAST_LOOKUP = !Boolean.getBoolean(PluginManager.class.getName()+".noFastLookup");
 
     /**
      * Remembers why a plugin failed to deploy.

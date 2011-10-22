@@ -231,7 +231,7 @@ public abstract class Slave extends Node implements Serializable {
     public FilePath getWorkspaceFor(TopLevelItem item) {
         FilePath r = getWorkspaceRoot();
         if(r==null)     return null;    // offline
-        return r.child(item.getName());
+        return r.child(item.getFullName());
     }
 
     public FilePath getRootPath() {
@@ -285,7 +285,7 @@ public abstract class Slave extends Node implements Serializable {
             URL res = Jenkins.getInstance().servletContext.getResource("/WEB-INF/" + name);
             if(res==null) {
                 // during the development this path doesn't have the files.
-                res = new URL(new File(".").getAbsoluteFile().toURI().toURL(),"target/generated-resources/WEB-INF/"+name);
+                res = new URL(new File(".").getAbsoluteFile().toURI().toURL(),"target/jenkins/WEB-INF/"+name);
             }
             return res;
         }
@@ -331,7 +331,7 @@ public abstract class Slave extends Node implements Serializable {
     /**
      * Invoked by XStream when this object is read into memory.
      */
-    private Object readResolve() {
+    protected Object readResolve() {
         // convert the old format to the new one
         if (launcher == null) {
             launcher = (agentCommand == null || agentCommand.trim().length() == 0)

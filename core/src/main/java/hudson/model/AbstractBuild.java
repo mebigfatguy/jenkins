@@ -68,6 +68,7 @@ import javax.servlet.ServletException;
 import java.io.File;
 import java.io.IOException;
 import java.io.StringWriter;
+import java.lang.ref.WeakReference;
 import java.text.MessageFormat;
 import java.util.AbstractSet;
 import java.util.ArrayList;
@@ -124,7 +125,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
     /**
      * Changes in this build.
      */
-    private volatile transient ChangeLogSet<? extends Entry> changeSet;
+    private volatile transient WeakReference<ChangeLogSet<? extends Entry>> changeSet;
 
     /**
      * Cumulative list of people who contributed to the build problem.
@@ -183,6 +184,35 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
     @Exported(name="builtOn")
     public String getBuiltOnStr() {
         return builtOn;
+    }
+
+    /**
+     * Allows subtypes to set the value of {@link #builtOn}.
+     * This is used for those implementations where an {@link AbstractBuild} is made 'built' without
+     * actually running its {@link #run()} method.
+     *
+     * @since 1.429
+     */
+    protected void setBuiltOnStr( String builtOn ) {
+        this.builtOn = builtOn;
+    }
+
+    /**
+     * Gets the nearest ancestor {@link AbstractBuild} that belongs to
+     * {@linkplain AbstractProject#getRootProject() the root project of getProject()} that
+     * dominates/governs/encompasses this build.
+     *
+     * <p>
+     * Some projects (such as matrix projects, Maven projects, or promotion processes) form a tree of jobs,
+     * and still in some of them, builds of child projects are related/tied to that of the parent project.
+     * In such a case, this method returns the governing build.
+     *
+     * @return never null. In the worst case the build dominates itself.
+     * @since 1.421
+     * @see AbstractProject#getRootProject()
+     */
+    public AbstractBuild<?,?> getRootBuild() {
+        return this;
     }
 
     /**
@@ -539,10 +569,10 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
                             SCM scm = project.getScm();
 
                             AbstractBuild.this.scm = scm.createChangeLogParser();
-                            AbstractBuild.this.changeSet = AbstractBuild.this.calcChangeSet();
+                            AbstractBuild.this.changeSet = new WeakReference<ChangeLogSet<? extends Entry>>(AbstractBuild.this.calcChangeSet());
 
                             for (SCMListener l : Jenkins.getInstance().getSCMListeners())
-                                l.onChangeLogParsed(AbstractBuild.this,listener,changeSet);
+                                l.onChangeLogParsed(AbstractBuild.this,listener,getChangeSet());
                             return;
                         }
                     } catch (AbortException e) {
@@ -701,6 +731,20 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
     }
 
     /**
+     * get the fingerprints associated with this build
+     *
+     * @return never null
+     */
+    @Exported(name = "fingerprint", inline = true, visibility = -1)
+    public Collection<Fingerprint> getBuildFingerprints() {
+        FingerprintAction fingerprintAction = getAction(FingerprintAction.class);
+        if (fingerprintAction != null) {
+            return fingerprintAction.getFingerprints().values();
+        }
+        return Collections.<Fingerprint>emptyList();
+    }
+
+    /**
      * Gets the changes incorporated into this build.
      *
      * @return never null.
@@ -724,17 +768,17 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
             }
         }
 
-        if (changeSet==null) // cached value
+        if (changeSet == null || changeSet.get() == null) // cached value
             try {
-                changeSet = calcChangeSet();
+                changeSet = new WeakReference<ChangeLogSet<? extends Entry>>(calcChangeSet());
             } finally {
                 // defensive check. if the calculation fails (such as through an exception),
                 // set a dummy value so that it'll work the next time. the exception will
                 // be still reported, giving the plugin developer an opportunity to fix it.
                 if (changeSet==null)
-                    changeSet=ChangeLogSet.createEmpty(this);
+                    changeSet=new WeakReference<ChangeLogSet<? extends Entry>>(ChangeLogSet.createEmpty(this));
             }
-        return changeSet;
+        return changeSet.get();
     }
 
     /**
@@ -1078,8 +1122,8 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
         FingerprintAction o = from.getAction(FingerprintAction.class);
         if (n==null || o==null)     return Collections.emptyMap();
 
-        Map<AbstractProject,Integer> ndep = n.getDependencies();
-        Map<AbstractProject,Integer> odep = o.getDependencies();
+        Map<AbstractProject,Integer> ndep = n.getDependencies(true);
+        Map<AbstractProject,Integer> odep = o.getDependencies(true);
 
         Map<AbstractProject,DependencyChange> r = new HashMap<AbstractProject,DependencyChange>();
 
@@ -1160,6 +1204,8 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
      */
     public synchronized void doStop(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
         Executor e = getExecutor();
+        if (e==null)
+            e = getOneOffExecutor();
         if (e!=null)
             e.doStop(req,rsp);
         else
@@ -1169,3 +1215,5 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
 
     private static final Logger LOGGER = Logger.getLogger(AbstractBuild.class.getName());
 }
+
+

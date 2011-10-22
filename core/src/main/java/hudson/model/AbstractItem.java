@@ -52,6 +52,8 @@ import org.kohsuke.stapler.export.ExportedBean;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -286,6 +288,44 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
         else                return n+" \u00BB "+getDisplayName();
     }
 
+    public String getRelativeNameFrom(ItemGroup p) {
+        // first list up all the parents
+        Map<ItemGroup,Integer> parents = new HashMap<ItemGroup,Integer>();
+        int depth=0;
+        while (p!=null) {
+            parents.put(p, depth++);
+            if (p instanceof Item)
+                p = ((Item)p).getParent();
+            else
+                p = null;
+        }
+
+        StringBuilder buf = new StringBuilder();
+        Item i=this;
+        while (true) {
+            if (buf.length()>0) buf.insert(0,'/');
+            buf.insert(0,i.getName());
+            ItemGroup g = i.getParent();
+
+            Integer d = parents.get(g);
+            if (d!=null) {
+                String s="";
+                for (int j=d; j>0; j--)
+                    s+="../";
+                return s+buf;
+            }
+
+            if (g instanceof Item)
+                i = (Item)g;
+            else
+                return null;
+        }
+    }
+
+    public String getRelativeNameFrom(Item item) {
+        return getRelativeNameFrom(item.getParent());
+    }
+
     /**
      * Called right after when a {@link Item} is loaded from disk.
      * This is an opporunity to do a post load processing.
@@ -335,10 +375,10 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
 
     @Exported(visibility=999,name="url")
     public final String getAbsoluteUrl() {
-        StaplerRequest request = Stapler.getCurrentRequest();
-        if(request==null)
-            throw new IllegalStateException("Not processing a HTTP request");
-        return Util.encode(Jenkins.getInstance().getRootUrl()+getUrl());
+        String r = Jenkins.getInstance().getRootUrl();
+        if(r==null)
+            throw new IllegalStateException("Root URL isn't configured yet. Cannot compute absolute URL.");
+        return Util.encode(r+getUrl());
     }
 
     /**
@@ -467,37 +507,45 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
         }
         if (req.getMethod().equals("POST")) {
             // submission
-            checkPermission(CONFIGURE);
-            XmlFile configXmlFile = getConfigFile();
-            AtomicFileWriter out = new AtomicFileWriter(configXmlFile.getFile());
-            try {
-                try {
-                    // this allows us to use UTF-8 for storing data,
-                    // plus it checks any well-formedness issue in the submitted
-                    // data
-                    Transformer t = TransformerFactory.newInstance()
-                            .newTransformer();
-                    t.transform(new StreamSource(req.getReader()),
-                            new StreamResult(out));
-                    out.close();
-                } catch (TransformerException e) {
-                    throw new IOException2("Failed to persist configuration.xml", e);
-                }
-
-                // try to reflect the changes by reloading
-                new XmlFile(Items.XSTREAM, out.getTemporaryFile()).unmarshal(this);
-                onLoad(getParent(), getRootDir().getName());
-
-                // if everything went well, commit this new version
-                out.commit();
-            } finally {
-                out.abort(); // don't leave anything behind
-            }
+            updateByXml(new StreamSource(req.getReader()));
             return;
         }
 
         // huh?
         rsp.sendError(SC_BAD_REQUEST);
+    }
+
+    /**
+     * Updates Job by its XML definition.
+     */
+    public void updateByXml(StreamSource source) throws IOException {
+        checkPermission(CONFIGURE);
+        XmlFile configXmlFile = getConfigFile();
+        AtomicFileWriter out = new AtomicFileWriter(configXmlFile.getFile());
+        try {
+            try {
+                // this allows us to use UTF-8 for storing data,
+                // plus it checks any well-formedness issue in the submitted
+                // data
+                Transformer t = TransformerFactory.newInstance()
+                        .newTransformer();
+                t.transform(source,
+                        new StreamResult(out));
+                out.close();
+            } catch (TransformerException e) {
+                throw new IOException2("Failed to persist configuration.xml", e);
+            }
+
+            // try to reflect the changes by reloading
+            new XmlFile(Items.XSTREAM, out.getTemporaryFile()).unmarshal(this);
+            onLoad(getParent(), getRootDir().getName());
+
+            // if everything went well, commit this new version
+            out.commit();
+            SaveableListener.fireOnChange(this, getConfigFile());
+        } finally {
+            out.abort(); // don't leave anything behind
+        }
     }
 
     public String toString() {

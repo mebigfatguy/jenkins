@@ -678,11 +678,18 @@ var hudsonRules = {
         e.parentNode.insertBefore(div,e.nextSibling);
         e.style.position = "relative"; // or else by default it's absolutely positioned, making "width:100%" break
 
-        var ds = new YAHOO.widget.DS_XHR(e.getAttribute("autoCompleteUrl"),["suggestions","name"]);
-        ds.scriptQueryParam = "value";
+        var ds = new YAHOO.util.XHRDataSource(e.getAttribute("autoCompleteUrl"));
+        ds.responseType = YAHOO.util.XHRDataSource.TYPE_JSON;
+        ds.responseSchema = {
+            resultsList: "suggestions",
+            fields: ["name"]
+        };
         
         // Instantiate the AutoComplete
         var ac = new YAHOO.widget.AutoComplete(e, div, ds);
+        ac.generateRequest = function(query) {
+            return "?value=" + query;
+        };
         ac.prehighlightClassName = "yui-ac-prehighlight";
         ac.animSpeed = 0;
         ac.useShadow = true;
@@ -727,9 +734,17 @@ var hudsonRules = {
         var h = e.clientHeight;
         var config = e.getAttribute("codemirror-config") || "";
         config = eval('({'+config+'})');
-        var w = CodeMirror.fromTextArea(e,config).getWrapperElement();
-        w.setAttribute("style","border:1px solid black;");
-        w.style.height = h+"px";
+        var codemirror = CodeMirror.fromTextArea(e,config);
+        e.codemirrorObject = codemirror;
+        if(typeof(codemirror.getScrollerElement) !== "function") {
+            // Maybe older versions of CodeMirror do not provide getScrollerElement method.
+            codemirror.getScrollerElement = function(){
+                return findElementsBySelector(codemirror.getWrapperElement(), ".CodeMirror-scroll")[0];
+            };
+        }
+        var scroller = codemirror.getScrollerElement();
+        scroller.setAttribute("style","border:1px solid black;");
+        scroller.style.height = h+"px";
     },
 
 // deferred client-side clickable map.
@@ -786,30 +801,39 @@ var hudsonRules = {
             return;
         }
 
-        var handle = textarea.nextSibling;
-        if(handle==null || handle.className!="textarea-handle") return;
+        // CodeMirror inserts a wrapper element next to the textarea.
+        // textarea.nextSibling may not be the handle.
+        var handles = findElementsBySelector(textarea.parentNode, ".textarea-handle");
+        if(handles.length != 1) return;
+        var handle = handles[0];
 
         var Event = YAHOO.util.Event;
 
+        function getCodemirrorScrollerOrTextarea(){
+            return textarea.codemirrorObject ? textarea.codemirrorObject.getScrollerElement() : textarea;
+        }
         handle.onmousedown = function(ev) {
             ev = Event.getEvent(ev);
-            var offset = textarea.offsetHeight-Event.getPageY(ev);
-            textarea.style.opacity = 0.5;
+            var s = getCodemirrorScrollerOrTextarea();
+            var offset = s.offsetHeight-Event.getPageY(ev);
+            s.style.opacity = 0.5;
             document.onmousemove = function(ev) {
                 ev = Event.getEvent(ev);
                 function max(a,b) { if(a<b) return b; else return a; }
-                textarea.style.height = max(32, offset + Event.getPageY(ev)) + 'px';
+                s.style.height = max(32, offset + Event.getPageY(ev)) + 'px';
                 return false;
             };
             document.onmouseup = function() {
                 document.onmousemove = null;
                 document.onmouseup = null;
-                textarea.style.opacity = 1;
+                var s = getCodemirrorScrollerOrTextarea();
+                s.style.opacity = 1;
             }
         };
         handle.ondblclick = function() {
-            textarea.style.height = "";
-            textarea.rows = textarea.value.split("\n").length;
+            var s = getCodemirrorScrollerOrTextarea();
+            s.style.height = "1px"; // To get actual height of the textbox, shrink it and show its scrollbar
+            s.style.height = s.scrollHeight + 'px';
         }
     },
 
@@ -902,6 +926,7 @@ var hudsonRules = {
             updateVisibility : function() {
                 var display = (this.outerVisible && this.innerVisible) ? "" : "none";
                 for (var e=this.start; e!=this.end; e=e.nextSibling) {
+                    if (e.nodeType!=1)  continue;
                     if (e.rowVisibilityGroup && e!=this.start) {
                         e.rowVisibilityGroup.makeOuterVisisble(this.innerVisible);
                         e = e.rowVisibilityGroup.end; // the above call updates visibility up to e.rowVisibilityGroup.end inclusive
@@ -1216,7 +1241,7 @@ function refillOnChange(e,onChange) {
                 if (window.YUI!=null)      YUI.log("Unable to find a nearby control of the name "+name,"warn")
                 return;
             }
-            try { c.addEventListener("change",h,false); } catch (ex) { c.attachEvent("change",h); }
+            try { c.addEventListener("change",h,false); } catch (ex) { c.attachEvent("onchange",h); }
             deps.push({name:Path.tail(name),control:c});
         });
     }
@@ -1256,7 +1281,7 @@ function applyNameRef(s,e,id) {
     // s contains the node itself
     for(var x=s.nextSibling; x!=e; x=x.nextSibling) {
         // to handle nested <f:rowSet> correctly, don't overwrite the existing value
-        if(x.getAttribute("nameRef")==null)
+        if(x.nodeType==1 && x.getAttribute("nameRef")==null)
             x.setAttribute("nameRef",id);
     }
 }
@@ -1331,7 +1356,7 @@ function AutoScroller(scrollContainer) {
             if (scrollDiv.scrollHeight > 0)
                 return scrollDiv.scrollHeight;
             else
-                if (objDiv.offsetHeight > 0)
+                if (scrollDiv.offsetHeight > 0)
                     return scrollDiv.offsetHeight;
 
             return null; // huh?
@@ -1346,7 +1371,8 @@ function AutoScroller(scrollContainer) {
             // the element height.
             //var height = ((scrollDiv.style.pixelHeight) ? scrollDiv.style.pixelHeight : scrollDiv.offsetHeight);
             var height = getViewportHeight();
-            var diff = currentHeight - scrollDiv.scrollTop - height;
+            var scrollPos = Math.max(scrollDiv.scrollTop, document.documentElement.scrollTop);
+            var diff = currentHeight - scrollPos - height;
             // window.alert("currentHeight=" + currentHeight + ",scrollTop=" + scrollDiv.scrollTop + ",height=" + height);
 
             return diff < this.bottomThreshold;
@@ -1354,7 +1380,9 @@ function AutoScroller(scrollContainer) {
 
         scrollToBottom : function() {
             var scrollDiv = $(this.scrollContainer);
-            scrollDiv.scrollTop = this.getCurrentHeight();
+            var currentHeight = this.getCurrentHeight();
+            if(document.documentElement) document.documentElement.scrollTop = currentHeight
+            scrollDiv.scrollTop = currentHeight;
         }
     };
 }
@@ -1708,8 +1736,12 @@ function getStyle(e,a){
 
 // set up logic behind the search box
 function createSearchBox(searchURL) {
-    var ds = new YAHOO.widget.DS_XHR(searchURL+"suggest",["suggestions","name"]);
-    ds.queryMatchCase = false;
+    var ds = new YAHOO.util.XHRDataSource(searchURL+"suggest");
+    ds.responseType = YAHOO.util.XHRDataSource.TYPE_JSON;
+    ds.responseSchema = {
+        resultsList: "suggestions",
+        fields: ["name"]
+    };
     var ac = new YAHOO.widget.AutoComplete("search-box","search-box-completion",ds);
     ac.typeAhead = false;
 
@@ -1943,6 +1975,19 @@ function buildFormTree(form) {
         return false;
     }
 }
+
+/**
+ * @param {boolean} toggle
+ *      When true, will check all checkboxes in the page. When false, unchecks them all.
+ */
+var toggleCheckboxes = function(toggle) {
+    var inputs = document.getElementsByTagName("input");
+    for(var i=0; i<inputs.length; i++) {
+        if(inputs[i].type === "checkbox") {
+            inputs[i].checked = toggle;
+        }
+    }
+};
 
 // this used to be in prototype.js but it must have been removed somewhere between 1.4.0 to 1.5.1
 String.prototype.trim = function() {

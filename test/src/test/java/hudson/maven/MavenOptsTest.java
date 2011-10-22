@@ -43,7 +43,7 @@ public class MavenOptsTest extends HudsonTestCase {
         MavenModuleSet m = createMavenProject();
         m.setScm(new ExtractResourceSCM(getClass().getResource("maven-opts-echo.zip")));
         m.setGoals("validate");
-        m.DESCRIPTOR.setGlobalMavenOpts("-Dhudson.mavenOpt.test=bar");
+        MavenModuleSet.DESCRIPTOR.setGlobalMavenOpts("-Dhudson.mavenOpt.test=bar");
         m.setAssignedLabel(createSlave(new EnvVars("MAVEN_OPTS", "-Dhudson.mavenOpt.test=foo")).getSelfLabel());
         m.setMavenOpts("-Dhudson.mavenOpt.test=baz");
         
@@ -58,7 +58,7 @@ public class MavenOptsTest extends HudsonTestCase {
         MavenModuleSet m = createMavenProject();
         m.setScm(new ExtractResourceSCM(getClass().getResource("maven-opts-echo.zip")));
         m.setGoals("validate");
-        m.DESCRIPTOR.setGlobalMavenOpts("-Dhudson.mavenOpt.test=bar");
+        MavenModuleSet.DESCRIPTOR.setGlobalMavenOpts("-Dhudson.mavenOpt.test=bar");
         
         buildAndAssertSuccess(m);
 
@@ -70,7 +70,7 @@ public class MavenOptsTest extends HudsonTestCase {
         MavenModuleSet m = createMavenProject();
         m.setScm(new ExtractResourceSCM(getClass().getResource("maven-opts-echo.zip")));
         m.setGoals("validate");
-        m.DESCRIPTOR.setGlobalMavenOpts("-Dhudson.mavenOpt.test=bar");
+        MavenModuleSet.DESCRIPTOR.setGlobalMavenOpts("-Dhudson.mavenOpt.test=bar");
         m.setMavenOpts("-Dhudson.mavenOpt.test=foo");
        
         buildAndAssertSuccess(m);
@@ -91,6 +91,22 @@ public class MavenOptsTest extends HudsonTestCase {
 
 	assertEquals("Parent build should have Result.UNSTABLE", Result.UNSTABLE, pBuild.getResult());
 	
+    }
+
+    /**
+     * Makes sure that environment variables in MAVEN_OPTS are properly expanded.
+     */
+    public void testEnvironmentVariableExpansion() throws Exception {
+        configureDefaultMaven();
+        MavenModuleSet m = createMavenProject();
+        m.setMavenOpts("$FOO");
+        m.setScm(new ExtractResourceSCM(getClass().getResource("maven-opts-echo.zip")));
+        m.setGoals("validate");
+        m.setAssignedLabel(createSlave(new EnvVars("FOO", "-Dhudson.mavenOpt.test=foo -Dhudson.mavenOpt.test2=bar")).getSelfLabel());
+
+        buildAndAssertSuccess(m);
+
+        assertLogContains("[hudson.mavenOpt.test=foo]", m.getLastBuild());
     }
 
 }

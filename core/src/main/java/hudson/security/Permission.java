@@ -23,6 +23,7 @@
  */
 package hudson.security;
 
+import com.google.common.collect.ImmutableSet;
 import hudson.model.Hudson;
 import jenkins.model.Jenkins;
 import net.sf.json.util.JSONUtils;
@@ -30,6 +31,7 @@ import net.sf.json.util.JSONUtils;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.jvnet.localizer.Localizable;
@@ -111,7 +113,12 @@ public final class Permission {
      * @since 1.325
      */
     public boolean enabled;
-    
+
+    /**
+     * Scopes that this permission is directly contained by.
+     */
+    private final Set<PermissionScope> scopes;
+
     /**
      * Defines a new permission.
      *
@@ -136,7 +143,7 @@ public final class Permission {
      * @param impliedBy
      *      See {@link #impliedBy}.
      */
-    public Permission(PermissionGroup group, String name, Localizable description, Permission impliedBy, boolean enable) {
+    public Permission(PermissionGroup group, String name, Localizable description, Permission impliedBy, boolean enable, PermissionScope[] scopes) {
         if(!JSONUtils.isJavaIdentifier(name))
             throw new IllegalArgumentException(name+" is not a Java identifier");
         this.owner = group.owner;
@@ -145,18 +152,36 @@ public final class Permission {
         this.description = description;
         this.impliedBy = impliedBy;
         this.enabled = enable;
+        this.scopes = ImmutableSet.copyOf(scopes);
 
         group.add(this);
         ALL.add(this);
     }
 
-    public Permission(PermissionGroup group, String name, Localizable description, Permission impliedBy) {
-        this(group, name, description, impliedBy, true);
+    public Permission(PermissionGroup group, String name, Localizable description, Permission impliedBy, PermissionScope scope) {
+        this(group,name,description,impliedBy,true,new PermissionScope[]{scope});
+        assert scope!=null;
     }
-    
+
+    /**
+     * @deprecated as of 1.421
+     *      Use {@link #Permission(PermissionGroup, String, Localizable, Permission, boolean, PermissionScope[])}
+     */
+    public Permission(PermissionGroup group, String name, Localizable description, Permission impliedBy, boolean enable) {
+        this(group,name,description,impliedBy,enable,new PermissionScope[]{PermissionScope.JENKINS});
+    }
+
+    /**
+     * @deprecated as of 1.421
+     *      Use {@link #Permission(PermissionGroup, String, Localizable, Permission, PermissionScope)}
+     */
+    public Permission(PermissionGroup group, String name, Localizable description, Permission impliedBy) {
+        this(group, name, description, impliedBy, PermissionScope.JENKINS);
+    }
+
     /**
      * @deprecated since 1.257.
-     *      Use {@link #Permission(PermissionGroup, String, Localizable, Permission)} 
+     *      Use {@link #Permission(PermissionGroup, String, Localizable, Permission)}
      */
     public Permission(PermissionGroup group, String name, Permission impliedBy) {
         this(group,name,null,impliedBy);
@@ -164,6 +189,17 @@ public final class Permission {
 
     private Permission(PermissionGroup group, String name) {
         this(group,name,null,null);
+    }
+
+    /**
+     * Checks if this permission is contained in the specified scope, (either directly or indirectly.)
+     */
+    public boolean isContainedBy(PermissionScope s) {
+        for (PermissionScope c : scopes) {
+            if (c.isContainedBy(s))
+                return true;
+        }
+        return false;
     }
 
     /**
@@ -234,7 +270,7 @@ public final class Permission {
 //
 //
 // Because of the initialization order issue, these two fields need to be defined here,
-// even though they logically belong to Hudson.
+// even though they logically belong to Jenkins.
 //
 
     /**
@@ -272,7 +308,7 @@ public final class Permission {
      * @deprecated since 2009-01-23.
      *      Use {@link jenkins.model.Jenkins#ADMINISTER}.
      */
-    public static final Permission FULL_CONTROL = new Permission(GROUP,"FullControl",HUDSON_ADMINISTER);
+    public static final Permission FULL_CONTROL = new Permission(GROUP, "FullControl",null, HUDSON_ADMINISTER);
 
     /**
      * Generic read access.

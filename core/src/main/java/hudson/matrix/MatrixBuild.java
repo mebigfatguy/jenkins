@@ -1,7 +1,8 @@
 /*
  * The MIT License
  * 
- * Copyright (c) 2004-2009, Sun Microsystems, Inc., Kohsuke Kawaguchi, Red Hat, Inc., Tom Huybrechts
+ * Copyright (c) 2004-2011, Sun Microsystems, Inc., Kohsuke Kawaguchi,
+ * Red Hat, Inc., Tom Huybrechts
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -167,10 +168,11 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
     }
 
     /**
-     * Returns all {@link MatrixRun}s for this {@link MatrixBuild}.
+     * Returns all {@link MatrixRun}s for exactly this {@link MatrixBuild}.
      * <p>
-     * Unlike {@link #getExactRuns()}, this method excludes those runs
+     * Unlike {@link #getRuns()}, this method excludes those runs
      * that didn't run and got inherited.
+     * @since 1.413
      */
     public List<MatrixRun> getExactRuns() {
         List<MatrixRun> r = new ArrayList<MatrixRun>();
@@ -193,7 +195,7 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
      * True if this build didn't do a full build and it is depending on the result of the previous build.
      */
     public boolean isPartial() {
-        for(MatrixConfiguration c : getParent().getItems()) {
+        for(MatrixConfiguration c : getParent().getActiveConfigurations()) {
             MatrixRun b = c.getNearestOldBuild(getNumber());
             if (b != null && b.getNumber()!=getNumber())
                 return true;
@@ -234,24 +236,9 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
             PrintStream logger = listener.getLogger();
 
             // list up aggregators
-            for (Publisher pub : p.getPublishers().values()) {
-                if (pub instanceof MatrixAggregatable) {
-                    MatrixAggregatable ma = (MatrixAggregatable) pub;
-                    MatrixAggregator a = ma.createAggregator(MatrixBuild.this, launcher, listener);
-                    if(a!=null)
-                        aggregators.add(a);
-                }
-            }
-
-            //let properties do their job
-            for (JobProperty prop : p.getProperties().values()) {
-                if (prop instanceof MatrixAggregatable) {
-                    MatrixAggregatable ma = (MatrixAggregatable) prop;
-                    MatrixAggregator a = ma.createAggregator(MatrixBuild.this, launcher, listener);
-                    if(a!=null)
-                        aggregators.add(a);
-                }
-            }
+            listUpAggregators(listener, p.getPublishers().values());
+            listUpAggregators(listener, p.getProperties().values());
+            listUpAggregators(listener, p.getBuildWrappers().values());
 
             axes = p.getAxes();
             Collection<MatrixConfiguration> activeConfigurations = p.getActiveConfigurations();
@@ -300,13 +287,16 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
                     if(p.isRunSequentially())
                         scheduleConfigurationBuild(logger, c);
                     Result buildResult = waitForCompletion(listener, c);
+                    logger.println(Messages.MatrixBuild_Completed(c.getDisplayName(), buildResult));
                     r = r.combine(buildResult);
                 }
 
                 return r;
             } catch( InterruptedException e ) {
                 logger.println("Aborted");
-                return Executor.currentExecutor().abortResult();
+                Executor x = Executor.currentExecutor();
+                x.recordCauseOfInterruption(MatrixBuild.this, listener);
+                return x.abortResult();
             } catch (AggregatorFailureException e) {
                 return Result.FAILURE;
             }
@@ -329,7 +319,18 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
                 }
             }
         }
-        
+
+        private void listUpAggregators(BuildListener listener, Collection<?> values) {
+            for (Object v : values) {
+                if (v instanceof MatrixAggregatable) {
+                    MatrixAggregatable ma = (MatrixAggregatable) v;
+                    MatrixAggregator a = ma.createAggregator(MatrixBuild.this, launcher, listener);
+                    if(a!=null)
+                        aggregators.add(a);
+                }
+            }
+        }
+
         private Result waitForCompletion(BuildListener listener, MatrixConfiguration c) throws InterruptedException, IOException, AggregatorFailureException {
             String whyInQueue = "";
             long startTime = System.currentTimeMillis();

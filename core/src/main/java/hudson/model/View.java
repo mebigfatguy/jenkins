@@ -26,7 +26,9 @@ package hudson.model;
 import hudson.DescriptorExtensionList;
 import hudson.Extension;
 import hudson.ExtensionPoint;
+import hudson.Indenter;
 import hudson.Util;
+import hudson.matrix.Layouter.Column;
 import hudson.model.Descriptor.FormException;
 import hudson.model.Node.Mode;
 import hudson.model.labels.LabelAtomPropertyDescriptor;
@@ -37,12 +39,15 @@ import hudson.security.ACL;
 import hudson.security.AccessControlled;
 import hudson.security.Permission;
 import hudson.security.PermissionGroup;
+import hudson.security.PermissionScope;
+import hudson.util.AlternativeUiTextProvider;
+import hudson.util.AlternativeUiTextProvider.Message;
 import hudson.util.DescribableList;
 import hudson.util.DescriptorList;
 import hudson.util.RunList;
+import hudson.views.ListViewColumn;
 import hudson.widgets.Widget;
 import jenkins.model.Jenkins;
-import net.sf.json.JSONObject;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.export.Exported;
@@ -294,6 +299,10 @@ public abstract class View extends AbstractModelObject implements AccessControll
         return getViewName();
     }
 
+    public String getNewPronoun() {
+        return AlternativeUiTextProvider.get(NEW_PRONOUN, this, Messages.AbstractItem_Pronoun());
+    }
+
     /**
      * By default, return true to render the "Edit view" link on the page.
      * This method is really just for the default "All" view to hide the edit link
@@ -327,6 +336,21 @@ public abstract class View extends AbstractModelObject implements AccessControll
      */
     public List<Widget> getWidgets() {
         return Collections.unmodifiableList(Jenkins.getInstance().getWidgets());
+    }
+
+    /**
+     * If this view uses &lt;t:projectView> for rendering, this method returns columns to be displayed.
+     */
+    public Iterable<? extends ListViewColumn> getColumns() {
+        return ListViewColumn.createDefaultInitialColumnList();
+    }
+
+    /**
+     * If this view uses &lt;t:projectView> for rendering, this method returns the indenter used
+     * to indent each row.
+     */
+    public Indenter getIndenter() {
+        return null;
     }
 
     /**
@@ -673,6 +697,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
      */
     public final synchronized void doConfigSubmit( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException, FormException {
         checkPermission(CONFIGURE);
+        requirePOST();
 
         submit(req);
 
@@ -681,8 +706,6 @@ public abstract class View extends AbstractModelObject implements AccessControll
         filterQueue = req.getParameter("filterQueue") != null;
 
         rename(req.getParameter("name"));
-
-        JSONObject json = req.getSubmittedForm();
 
         getProperties().rebuild(req, req.getSubmittedForm(), getApplicablePropertyDescriptors());
 
@@ -787,11 +810,11 @@ public abstract class View extends AbstractModelObject implements AccessControll
 
     public static final PermissionGroup PERMISSIONS = new PermissionGroup(View.class,Messages._View_Permissions_Title());
     /**
-     * Permission to create new jobs.
+     * Permission to create new views.
      */
-    public static final Permission CREATE = new Permission(PERMISSIONS,"Create", Messages._View_CreatePermission_Description(), Permission.CREATE);
-    public static final Permission DELETE = new Permission(PERMISSIONS,"Delete", Messages._View_DeletePermission_Description(), Permission.DELETE);
-    public static final Permission CONFIGURE = new Permission(PERMISSIONS,"Configure", Messages._View_ConfigurePermission_Description(), Permission.CONFIGURE);
+    public static final Permission CREATE = new Permission(PERMISSIONS,"Create", Messages._View_CreatePermission_Description(), Permission.CREATE, PermissionScope.ITEM_GROUP);
+    public static final Permission DELETE = new Permission(PERMISSIONS,"Delete", Messages._View_DeletePermission_Description(), Permission.DELETE, PermissionScope.ITEM_GROUP);
+    public static final Permission CONFIGURE = new Permission(PERMISSIONS,"Configure", Messages._View_ConfigurePermission_Description(), Permission.CONFIGURE, PermissionScope.ITEM_GROUP);
 
     // to simplify access from Jelly
     public static Permission getItemCreatePermission() {
@@ -837,4 +860,10 @@ public abstract class View extends AbstractModelObject implements AccessControll
                 p.setView(getOwner());
         }
     }
+
+    /**
+     * "Job" in "New Job". When a view is used in a context that restricts the child type,
+     * It might be useful to override this.
+     */
+    public static final Message<View> NEW_PRONOUN = new Message<View>();
 }

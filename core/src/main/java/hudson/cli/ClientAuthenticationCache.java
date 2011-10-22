@@ -56,7 +56,7 @@ public class ClientAuthenticationCache implements Serializable {
     }
 
     /**
-     * Gets the persisted authentication for this Hudson.
+     * Gets the persisted authentication for this Jenkins.
      *
      * @return {@link jenkins.model.Jenkins#ANONYMOUS} if no such credential is found, or if the stored credential is invalid.
      */
@@ -65,8 +65,8 @@ public class ClientAuthenticationCache implements Serializable {
         Secret userName = Secret.decrypt(props.getProperty(getPropertyKey()));
         if (userName==null) return Jenkins.ANONYMOUS; // failed to decrypt
         try {
-            UserDetails u = h.getSecurityRealm().loadUserByUsername(userName.toString());
-            return new UsernamePasswordAuthenticationToken(u.getUsername(), u.getPassword(), u.getAuthorities());
+            UserDetails u = h.getSecurityRealm().loadUserByUsername(userName.getPlainText());
+            return new UsernamePasswordAuthenticationToken(u.getUsername(), "", u.getAuthorities());
         } catch (AuthenticationException e) {
             return Jenkins.ANONYMOUS;
         } catch (DataAccessException e) {

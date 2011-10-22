@@ -96,7 +96,7 @@ import java.util.logging.Logger;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public class User extends AbstractModelObject implements AccessControlled, Saveable, Comparable<User> {
+public class User extends AbstractModelObject implements AccessControlled, DescriptorByNameOwner, Saveable, Comparable<User> {
 
     private transient final String id;
 
@@ -247,7 +247,7 @@ public class User extends AbstractModelObject implements AccessControlled, Savea
     public Authentication impersonate() {
         try {
             UserDetails u = Jenkins.getInstance().getSecurityRealm().loadUserByUsername(id);
-            return new UsernamePasswordAuthenticationToken(u.getUsername(), u.getPassword(), u.getAuthorities());
+            return new UsernamePasswordAuthenticationToken(u.getUsername(), "", u.getAuthorities());
         } catch (AuthenticationException e) {
             // TODO: use the stored GrantedAuthorities
             return new UsernamePasswordAuthenticationToken(id, "",
@@ -454,6 +454,7 @@ public class User extends AbstractModelObject implements AccessControlled, Savea
      */
     public void doConfigSubmit( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException, FormException {
         checkPermission(Jenkins.ADMINISTER);
+        requirePOST();
 
         fullName = req.getParameter("fullName");
         description = req.getParameter("description");
@@ -572,6 +573,10 @@ public class User extends AbstractModelObject implements AccessControlled, Savea
     public boolean canDelete() {
         return hasPermission(Jenkins.ADMINISTER) && !id.equals(Jenkins.getAuthentication().getName())
                 && new File(getRootDir(), id).exists();
+    }
+
+    public Descriptor getDescriptorByName(String className) {
+        return Jenkins.getInstance().getDescriptorByName(className);
     }
 
     public Object getDynamic(String token) {

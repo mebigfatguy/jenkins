@@ -141,8 +141,9 @@ public class Queue extends ResourceController implements Saveable {
     /**
      * {@link Task}s that can be built immediately
      * but blocked because another build is in progress,
-     * required {@link Resource}s are not available, or otherwise blocked
-     * by {@link Task#isBuildBlocked()}.
+     * required {@link Resource}s are not available,
+     * blocked via {@link QueueTaskDispatcher#canRun(Item)},
+     * or otherwise blocked by {@link Task#isBuildBlocked()}.
      */
     private final ItemList<BlockedItem> blockedProjects = new ItemList<BlockedItem>();
 
@@ -274,13 +275,16 @@ public class Queue extends ResourceController implements Saveable {
             File queueFile = getQueueFile();
             if (queueFile.exists()) {
                 BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(queueFile)));
-                String line;
-                while ((line = in.readLine()) != null) {
-                    AbstractProject j = Jenkins.getInstance().getItemByFullName(line, AbstractProject.class);
-                    if (j != null)
-                        j.scheduleBuild();
+                try {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        AbstractProject j = Jenkins.getInstance().getItemByFullName(line, AbstractProject.class);
+                        if (j != null)
+                            j.scheduleBuild();
+                    }
+                } finally {
+                    in.close();
                 }
-                in.close();
                 // discard the queue file now that we are done
                 queueFile.delete();
             } else {
@@ -784,7 +788,7 @@ public class Queue extends ResourceController implements Saveable {
                     BuildableItem p = itr.next();
 
                     // one last check to make sure this build is not blocked.
-                    if (isBuildBlocked(p.task)) {
+                    if (isBuildBlocked(p)) {
                         itr.remove();
                         blockedProjects.put(p.task,new BlockedItem(p));
                         continue;
@@ -882,10 +886,19 @@ public class Queue extends ResourceController implements Saveable {
     }
 
     /**
-     * Checks if the given task is blocked.
+     * Checks if the given item should be prevented from entering into the {@link #buildables} state
+     * and instead stay in the {@link #blockedProjects} state.
      */
-    private boolean isBuildBlocked(Task t) {
-        return t.isBuildBlocked() || !canRun(t.getResourceList());
+    private boolean isBuildBlocked(Item i) {
+        if (i.task.isBuildBlocked() || !canRun(i.task.getResourceList()))
+            return true;
+
+        for (QueueTaskDispatcher d : QueueTaskDispatcher.all()) {
+            if (d.canRun(i)!=null)
+                return true;
+        }
+
+        return false;
     }
 
     /**
@@ -904,9 +917,15 @@ public class Queue extends ResourceController implements Saveable {
 
     /**
      * Queue maintenance.
+     *
      * <p>
      * Move projects between {@link #waitingList}, {@link #blockedProjects}, and {@link #buildables}
      * appropriately.
+     *
+     * <p>
+     * Jenkins internally invokes this method by itself whenever there's a change that can affect
+     * the scheduling (such as new node becoming online, # of executors change, a task completes execution, etc.),
+     * and it also gets invoked periodically (see {@link MaintainTask}.)
      */
     public synchronized void maintain() {
         if (LOGGER.isLoggable(Level.FINE))
@@ -916,7 +935,7 @@ public class Queue extends ResourceController implements Saveable {
         Iterator<BlockedItem> itr = blockedProjects.values().iterator();
         while (itr.hasNext()) {
             BlockedItem p = itr.next();
-            if (!isBuildBlocked(p.task) && allowNewBuildableTask(p.task)) {
+            if (!isBuildBlocked(p) && allowNewBuildableTask(p.task)) {
                 // ready to be executed
                 LOGGER.fine(p.task.getFullDisplayName() + " no longer blocked");
                 itr.remove();
@@ -932,7 +951,7 @@ public class Queue extends ResourceController implements Saveable {
 
             waitingList.remove(top);
             Task p = top.task;
-            if (!isBuildBlocked(p) && allowNewBuildableTask(p)) {
+            if (!isBuildBlocked(top) && allowNewBuildableTask(p)) {
                 // ready to be executed immediately
                 LOGGER.fine(p.getFullDisplayName() + " ready to build");
                 makeBuildable(new BuildableItem(top));
@@ -1100,7 +1119,8 @@ public class Queue extends ResourceController implements Saveable {
         String getUrl();
         
         /**
-         * True if the task allows concurrent builds
+         * True if the task allows concurrent builds, where the same {@link Task} is executed
+         * by multiple executors concurrently on the same or different nodes.
          *
          * @since 1.338
          */
@@ -1178,6 +1198,7 @@ public class Queue extends ResourceController implements Saveable {
          * VM-wide unique ID that tracks the {@link Task} as it moves through different stages
          * in the queue (each represented by different subtypes of {@link Item}.
          */
+        @Exported
     	public final int id;
     	
 		/**
@@ -1454,28 +1475,43 @@ public class Queue extends ResourceController implements Saveable {
         }
 
         public CauseOfBlockage getCauseOfBlockage() {
-            Jenkins hudson = Jenkins.getInstance();
+            Jenkins jenkins = Jenkins.getInstance();
             if(ifBlockedByHudsonShutdown(task))
                 return CauseOfBlockage.fromMessage(Messages._Queue_HudsonIsAboutToShutDown());
 
             Label label = getAssignedLabel();
-            if (hudson.getNodes().isEmpty())
+            List<Node> allNodes = jenkins.getNodes();
+            if (allNodes.isEmpty())
                 label = null;    // no master/slave. pointless to talk about nodes
 
             if (label != null) {
+                Set<Node> nodes = label.getNodes();
                 if (label.isOffline()) {
-                    Set<Node> nodes = label.getNodes();
                     if (nodes.size() != 1)      return new BecauseLabelIsOffline(label);
                     else                        return new BecauseNodeIsOffline(nodes.iterator().next());
+                } else {
+                    if (nodes.size() != 1)      return new BecauseLabelIsBusy(label);
+                    else                        return new BecauseNodeIsBusy(nodes.iterator().next());
                 }
+            } else {
+                CauseOfBlockage c = null;
+                for (Node node : allNodes) {
+                    if (node.toComputer().isPartiallyIdle()) {
+                        c = canTake(node);
+                        if (c==null)    break;
+                    }
+                }
+
+                return CauseOfBlockage.createNeedsMoreExecutor(Messages._Queue_WaitingForNextAvailableExecutor());
             }
+        }
 
-            if(label==null)
-                return CauseOfBlockage.fromMessage(Messages._Queue_WaitingForNextAvailableExecutor());
-
-            Set<Node> nodes = label.getNodes();
-            if (nodes.size() != 1)      return new BecauseLabelIsBusy(label);
-            else                        return new BecauseNodeIsBusy(nodes.iterator().next());
+        private CauseOfBlockage canTake(Node node) {
+            for (QueueTaskDispatcher d : QueueTaskDispatcher.all()) {
+                CauseOfBlockage cause = d.canTake(node, this);
+                if (cause!=null)    return cause;
+            }
+            return null;
         }
 
         @Override

@@ -25,15 +25,17 @@ package hudson.maven;
 
 import hudson.EnvVars;
 import hudson.FilePath;
-import hudson.maven.agent.AbortException;
+import hudson.maven.reporters.MavenArtifactRecord;
 import hudson.maven.reporters.SurefireArchiver;
+import hudson.slaves.WorkspaceList;
+import hudson.slaves.WorkspaceList.Lease;
+import hudson.maven.agent.AbortException;
 import hudson.model.AbstractBuild;
 import hudson.model.BuildListener;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Environment;
 import hudson.model.Executor;
-import jenkins.model.Jenkins;
 import hudson.model.Node;
 import hudson.model.Result;
 import hudson.model.Run;
@@ -41,31 +43,12 @@ import hudson.model.TaskListener;
 import hudson.remoting.Channel;
 import hudson.scm.ChangeLogSet;
 import hudson.scm.ChangeLogSet.Entry;
-import hudson.slaves.WorkspaceList;
-import hudson.slaves.WorkspaceList.Lease;
 import hudson.tasks.BuildWrapper;
 import hudson.tasks.Maven.MavenInstallation;
 import hudson.tasks.Publisher;
 import hudson.util.ArgumentListBuilder;
 import hudson.util.DescribableList;
 import hudson.util.IOUtils;
-import hudson.util.ReflectionUtils;
-
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.Serializable;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.logging.Logger;
-
 import org.apache.maven.BuildFailureException;
 import org.apache.maven.artifact.versioning.ComparableVersion;
 import org.apache.maven.execution.MavenSession;
@@ -76,12 +59,28 @@ import org.apache.maven.project.MavenProject;
 import org.kohsuke.stapler.Ancestor;
 import org.kohsuke.stapler.Stapler;
 import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.export.Exported;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Logger;
 
 /**
  * {@link Run} for {@link MavenModule}.
  * 
  * @author Kohsuke Kawaguchi
  */
+@SuppressWarnings("deprecation") // as we're restricted to Maven 2.x API here, but compile against Maven 3.x we cannot avoid deprecations
 public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
     /**
      * {@link MavenReporter}s that will contribute project actions.
@@ -96,13 +95,6 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
      * @since 1.98.
      */
     private List<ExecutedMojo> executedMojos;
-
-    /**
-     * Name of the slave this project was built on.
-     * Null or "" if built by the master. (null happens when we read old record that didn't have this information.)
-     * @since 1.394
-     */
-    private String builtOn;    
     
     public MavenBuild(MavenModule job) throws IOException {
         super(job);
@@ -164,6 +156,14 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
     }
 
     /**
+     * The same as {@link #getParentBuild()}.
+     */
+    @Override
+    public AbstractBuild<?, ?> getRootBuild() {
+        return getParentBuild();
+    }
+
+    /**
      * Gets the "governing" {@link MavenModuleSet} that has set
      * the workspace for this build.
      *
@@ -190,6 +190,14 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
     }
 
     /**
+     * Information about artifacts produced by Maven.
+     */
+    @Exported
+    public MavenArtifactRecord getMavenArtifacts() {
+        return getAction(MavenArtifactRecord.class);
+    }
+
+    /**
      * Exposes {@code MAVEN_OPTS} to forked processes.
      *
      * <p>
@@ -198,9 +206,7 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
     @Override
     public EnvVars getEnvironment(TaskListener log) throws IOException, InterruptedException {
         EnvVars envs = super.getEnvironment(log);
-        String opts = project.getParent().getMavenOpts();
-        if(opts!=null)
-            envs.put("MAVEN_OPTS", opts);
+
         // We need to add M2_HOME and the mvn binary to the PATH so if Maven
         // needs to run Maven it will pick the correct one.
         // This can happen if maven calls ANT which itself calls Maven
@@ -280,25 +286,11 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
         return super.getParent();
     }
 
-    /**
-     * @see hudson.model.AbstractBuild#getBuiltOn()
-     * @since 1.394
-     */
-    public Node getBuiltOn() {
-        if(builtOn==null || builtOn.equals(""))
-            return Jenkins.getInstance();
-        else
-            return Jenkins.getInstance().getNode(builtOn);
+    // allow MavenModuleSetBuild to set this.
+    @Override
+    protected void setBuiltOnStr(String builtOn) {
+        super.setBuiltOnStr(builtOn);
     }
-
-    /**
-     * @param builtOn
-     * @since 1.394
-     */
-    public void setBuiltOnStr( String builtOn )
-    {
-        this.builtOn = builtOn;
-    }    
 
     /**
      * Runs Maven and builds the project.
@@ -327,7 +319,7 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
 
             @Override
             public void executeAsync(final BuildCallable<?,?> program) throws IOException {
-                futures.add(Channel.current().callAsync(new AsyncInvoker(core,program)));
+                recordAsynchronousExecution(Channel.current().callAsync(new AsyncInvoker(core,program)));
             }
 
             public MavenBuildInformation getMavenBuildInformation()
@@ -398,6 +390,8 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
      * {@link MavenBuildProxy} implementation.
      */
     class ProxyImpl implements MavenBuildProxy, Serializable {
+        private static final long serialVersionUID = 8865133776526671879L;
+
         public <V, T extends Throwable> V execute(BuildCallable<V, T> program) throws T, IOException, InterruptedException {
             return program.call(MavenBuild.this);
         }
@@ -473,6 +467,8 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
     }
 
     public class ProxyImpl2 extends ProxyImpl implements MavenBuildProxy2 {
+        private static final long serialVersionUID = -3377221864644014218L;
+        
         private final SplittableBuildListener listener;
         long startTime;
         private final OutputStream log;
@@ -509,7 +505,7 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
         }
 
         /**
-         * Sends the accumuldated log in {@link SplittableBuildListener} to the log of this build.
+         * Sends the accumulated log in {@link SplittableBuildListener} to the log of this build.
          */
         public void appendLastLog() {
             try {
@@ -554,6 +550,11 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
 
         private void rememberModulesToBuildAgainNextTime() {
             MavenModuleSetBuild moduleSetBuild = getModuleSetBuild();
+            
+            if (moduleSetBuild == null) {
+                // ModuleSetBuild is gone, for whatever reason JENKINS-9822
+                return;
+            }
             
             if(hasntStartedYet()) {
                 // record modules which have not been build though they should have - i.e. because they
@@ -664,25 +665,14 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
 
             LOGGER.fine(getFullDisplayName()+" is building with mavenVersion " + mavenVersion + " from file " + mavenInformation.getVersionResourcePath());
             
-            ProcessCache.MavenProcess process = null;
-            
-            boolean maven3orLater = new ComparableVersion (mavenVersion).compareTo( new ComparableVersion ("3.0") ) >= 0;
-           
-            if ( maven3orLater )
-            {
-                process =
-                    MavenBuild.mavenProcessCache.get( launcher.getChannel(), listener,
-                                                      new Maven3ProcessFactory( getParent().getParent(), launcher,
-                                                                                envVars, getMavenOpts(listener), null ) );
-            }
-            else
-            {
-                process =
-                    MavenBuild.mavenProcessCache.get( launcher.getChannel(), listener,
-                                                      new MavenProcessFactory( getParent().getParent(), launcher,
-                                                                               envVars, getMavenOpts(listener), null ) );
-            }
 
+            boolean maven3orLater = new ComparableVersion(mavenVersion).compareTo( new ComparableVersion ("3.0") ) >= 0;
+
+            ProcessCache.MavenProcess process = MavenBuild.mavenProcessCache.get( launcher.getChannel(), listener, maven3orLater
+                ? new Maven3ProcessFactory(
+                        getParent().getParent(), launcher, envVars, getMavenOpts(listener, envVars), null )
+                : new MavenProcessFactory(
+                        getParent().getParent(), launcher, envVars, getMavenOpts(listener, envVars), null ));
 
             ArgumentListBuilder margs = new ArgumentListBuilder("-N","-B");
             if(mms.usesPrivateRepository())
@@ -743,32 +733,17 @@ public class MavenBuild extends AbstractMavenBuild<MavenModule,MavenBuild> {
         }
 
         public void post2(BuildListener listener) throws Exception {
-            for (MavenReporter reporter : reporters)
-                reporter.end(MavenBuild.this,launcher,listener);
+            if (reporters != null) {
+                for (MavenReporter reporter : reporters) {
+                    reporter.end(MavenBuild.this,launcher,listener);
+                }
+            }
         }
 
     }
 
-    public String getMavenOpts(TaskListener listener) {
-        MavenModuleSet mms = getProject().getParent();
-        String opts = mms.getMavenOpts();
-        if (opts == null ) return null;
-        try {
-            Class<?> clazz = Class.forName( "org.jenkinsci.plugins.tokenmacro.TokenMacro" );
-            Method expandMethod =
-                ReflectionUtils.findMethod(clazz, "expand", new Class[]{ AbstractBuild.class, TaskListener.class, String.class} );
-            opts = (String) expandMethod.invoke( null, this, listener, opts );
-            //opts = TokenMacro.expand(this, listener, opts);
-        }
-        catch(Exception tokenException) {
-            //Token plugin not present. Ignore, this is OK.
-            //listener.error("Ignore Problem expanding maven opts macros " + tokenException.getMessage());
-        }
-        catch(LinkageError linkageError) {
-            // Token plugin not present. Ignore, this is OK.
-        }
-
-        return opts;
+    public String getMavenOpts(TaskListener listener, EnvVars envVars) {
+        return envVars.expand(expandTokens(listener, getProject().getParent().getMavenOpts()));
     }
 
     private static final int MAX_PROCESS_CACHE = 5;
